@@ -261,9 +261,6 @@ local function submit(state, editor)
 		return
 	elseif not state.issue and next(state.loading) then
 		return
-	elseif not state.issue and not current.reporter then
-		notify.warn("Reporter is required")
-		return
 	end
 
 	if state.issue and not is_modified(state, editor) then
@@ -314,8 +311,10 @@ local function submit(state, editor)
 		description = description(state, current.body),
 		issuetype = { id = current.issue_type },
 		assignee = current.assignee and { [user_key] = current.assignee } or vim.NIL,
-		reporter = current.reporter and { [user_key] = current.reporter } or vim.NIL,
 	}
+	if current.reporter ~= state.initial.reporter then
+		fields.reporter = current.reporter and { [user_key] = current.reporter } or vim.NIL
+	end
 
 	if state.issue then
 		issues.update_issue(state.issue.key, fields, function(ok, err)
