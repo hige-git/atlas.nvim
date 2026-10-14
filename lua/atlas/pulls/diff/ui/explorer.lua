@@ -462,6 +462,21 @@ local function current_folder(state)
 end
 
 ---@param state AtlasDiffExplorer
+---@return AtlasDiffFile[]
+function M.files_under_cursor(state)
+	local row = state.rows[current_row(state)]
+	if not row or not (row.path or row.header) then
+		return {}
+	end
+
+	local prefix = row.path or ""
+	return vim.tbl_filter(function(file)
+		local section = state.reviewed_files and state.reviewed_files[file.path] and "reviewed" or "files"
+		return section == row.section and file.path:sub(1, #prefix) == prefix
+	end, state.source)
+end
+
+---@param state AtlasDiffExplorer
 ---@param collapsed boolean
 function M.set_folder_collapsed(state, collapsed)
 	local row = current_folder(state)

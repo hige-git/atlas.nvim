@@ -352,10 +352,65 @@ local function current_file(session)
 end
 
 ---@param session AtlasDiffSession
-local function toggle_file_reviewed(session)
-	local result = session.data
-	if not result.review then
+---@param files AtlasDiffFile[]
+---@param reviewed boolean
+local function save_reviewed(session, files, reviewed)
+	local paths = {}
+	for _, file in ipairs(files) do
+		session.reviewed_files[file.path] = reviewed or nil
+		paths[#paths + 1] = file.path
+	end
+
+	local pr = session.data.pr
+	---@cast pr PullRequest
+	local provider = providers.load(pr.provider, "pulls")
+	---@cast provider PullsProvider
+	local reviews = provider.capabilities.reviews
+	if not reviews or not reviews.set_files_reviewed then
 		return
+	end
+
+	local pending = request_scope.new()
+	for _, path in ipairs(paths) do
+		session.requests[path] = pending
+	end
+	pending.run(function(done)
+		return reviews.set_files_reviewed(pr, paths, reviewed, done)
+	end, function(ok, err)
+		for _, path in ipairs(paths) do
+			session.requests[path] = nil
+		end
+		if ok then
+			return
+		end
+
+		logger.logerror("diff.set_files_reviewed failed", {
+			provider = pr.provider,
+			repo = pr.repo_full_name,
+			pr_id = pr.id,
+			paths = paths,
+			error = err,
+		})
+		local message = "Unable to update reviewed files" .. (err and "\n\n" .. err or "")
+		notify.error(message, { vim_notify = true })
+	end)
+end
+
+---@param session AtlasDiffSession
+local function toggle_file_reviewed(session)
+	if not session.data.review then
+		return
+	end
+
+	if vim.api.nvim_get_current_buf() == session.explorer.buf then
+		local files = vim.tbl_filter(function(file)
+			return not session.requests[file.path]
+		end, explorer.files_under_cursor(session.explorer))
+		if #files > 0 then
+			save_reviewed(session, files, not session.reviewed_files[files[1].path])
+			update_panels(session)
+			return
+		end
 	end
 
 	local file = current_file(session)
@@ -363,7 +418,6 @@ local function toggle_file_reviewed(session)
 		return
 	end
 
-	local reviewed = not session.reviewed_files[file.path]
 	local files = session.explorer.files
 	local next_file
 	for index, item in ipairs(files) do
@@ -373,7 +427,7 @@ local function toggle_file_reviewed(session)
 		end
 	end
 
-	session.reviewed_files[file.path] = reviewed or nil
+	save_reviewed(session, { file }, not session.reviewed_files[file.path])
 	update_panels(session)
 
 	if next_file and next_file ~= file then
@@ -381,36 +435,6 @@ local function toggle_file_reviewed(session)
 	else
 		explorer.reveal(session.explorer, file)
 	end
-
-	local pr = result.pr
-	---@cast pr PullRequest
-	local provider = providers.load(pr.provider, "pulls")
-	---@cast provider PullsProvider
-	local reviews = provider.capabilities.reviews
-	if not reviews or not reviews.set_file_reviewed then
-		return
-	end
-
-	local pending = request_scope.new()
-	session.requests[file.path] = pending
-	pending.run(function(done)
-		return reviews.set_file_reviewed(pr, file.path, reviewed, done)
-	end, function(ok, err)
-		session.requests[file.path] = nil
-		if ok then
-			return
-		end
-
-		logger.logerror("diff.set_file_reviewed failed", {
-			provider = pr.provider,
-			repo = pr.repo_full_name,
-			pr_id = pr.id,
-			path = file.path,
-			error = err,
-		})
-		local message = "Unable to update reviewed file" .. (err and "\n\n" .. err or "")
-		notify.error(message, { vim_notify = true })
-	end)
 end
 
 ---@param session AtlasDiffSession
