@@ -216,20 +216,52 @@ function M.fetch_by_refs(refs, opts, on_done)
 		return nil
 	end
 
-	local quoted = {}
-	for _, ref in ipairs(refs) do
-		table.insert(quoted, string.format('"%s"', ref.key:gsub('"', '\\"')))
+	if service.is_server() then
+		local quoted = {}
+		for _, ref in ipairs(refs) do
+			table.insert(quoted, string.format('"%s"', ref.key:gsub('"', '\\"')))
+		end
+
+		return M.search_issues("key in (" .. table.concat(quoted, ",") .. ")", function(page, err)
+			if err or page == nil then
+				on_done({}, err or "Failed to fetch issues")
+				return
+			end
+			on_done(page.items, nil)
+		end, {
+			force_refresh = opts.force_refresh == true,
+			pagelen = #refs,
+		})
 	end
 
-	return M.search_issues("key in (" .. table.concat(quoted, ",") .. ")", function(page, err)
-		if err or page == nil then
+	local keys = vim.tbl_map(function(ref)
+		return ref.key
+	end, refs)
+	local cache_key = "jira:bulkfetch:" .. table.concat(keys, ",")
+	if opts.force_refresh then
+		service.clear_memory_cache()
+	else
+		local cached = service.get_cache(cache_key)
+		if cached then
+			on_done(cached, nil)
+			return nil
+		end
+	end
+
+	local story_points_field = config.options.issues.jira.project_config.story_points_field
+	local data = { issueIdsOrKeys = keys, fields = search_fields(story_points_field) }
+	return service.request("POST", "/issue/bulkfetch", data, function(result, err)
+		if err or not result then
 			on_done({}, err or "Failed to fetch issues")
 			return
 		end
-		on_done(page.items, nil)
+
+		local items = normalizer.to_issues_list(result.issues or {}, story_points_field)
+		service.set_cache(cache_key, items)
+		on_done(items, nil)
 	end, {
-		force_refresh = opts.force_refresh == true,
-		pagelen = #refs,
+		action = "Fetch issues",
+		keys = table.concat(keys, ","),
 	})
 end
 
