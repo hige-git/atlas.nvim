@@ -153,7 +153,7 @@ return {
 			approve = reviews_api.approve,
 			request_changes = reviews_api.request_changes,
 			discard_review = reviews_api.discard,
-			-- set_file_reviewed = nil,
+			-- set_files_reviewed = nil,
 		},
 		-- tasks = {
 		-- 	add_task = nil,

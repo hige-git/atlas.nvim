@@ -153,19 +153,6 @@ local function reviewer_query(query)
 	return query
 end
 
-local SET_FILE_REVIEWED_MUTATIONS = {
-	[true] = [[
-mutation($pullRequestId:ID!,$path:String!){
-  markFileAsViewed(input:{pullRequestId:$pullRequestId,path:$path}){clientMutationId}
-}
-]],
-	[false] = [[
-mutation($pullRequestId:ID!,$path:String!){
-  unmarkFileAsViewed(input:{pullRequestId:$pullRequestId,path:$path}){clientMutationId}
-}
-]],
-}
-
 ---@param node table|nil
 ---@return PullsReview
 local function from_node(node)
@@ -870,36 +857,46 @@ function M.fetch_threads(pr, opts, on_done)
 end
 
 ---@param pr PullRequest
----@param path string
+---@param paths string[]
 ---@param reviewed boolean
 ---@param on_done fun(ok: boolean, err: string|nil)
 ---@return { cancel: fun() }|nil
-function M.set_file_reviewed(pr, path, reviewed, on_done)
+function M.set_files_reviewed(pr, paths, reviewed, on_done)
 	---@cast pr GitHubPullRequest
 	local pull_request_id = pr.node_id
 	if not pull_request_id then
 		on_done(false, "Missing pull request node id")
 		return nil
 	end
-	return cli.gh({
-		"api",
-		"graphql",
+
+	local mutation = reviewed and "markFileAsViewed" or "unmarkFileAsViewed"
+	local variables, fields = { "$pullRequestId:ID!" }, {}
+	local args = { "api", "graphql", "-f", "pullRequestId=" .. pull_request_id }
+	for index, path in ipairs(paths) do
+		variables[#variables + 1] = string.format("$path%d:String!", index)
+		fields[#fields + 1] = string.format(
+			"  file%d: %s(input:{pullRequestId:$pullRequestId,path:$path%d}){clientMutationId}",
+			index,
+			mutation,
+			index
+		)
+		vim.list_extend(args, { "-f", string.format("path%d=%s", index, path) })
+	end
+	vim.list_extend(args, {
 		"-f",
-		"query=" .. SET_FILE_REVIEWED_MUTATIONS[reviewed],
-		"-f",
-		"pullRequestId=" .. pull_request_id,
-		"-f",
-		"path=" .. path,
-	}, function(_, err)
+		string.format("query=mutation(%s){\n%s\n}", table.concat(variables, ","), table.concat(fields, "\n")),
+	})
+
+	return cli.gh(args, function(_, err)
 		if err == nil then
 			cli.delete_mem(string.format("github:review-context:%s:%s", pr.repo_full_name, tostring(pr.id)))
 		end
 		on_done(err == nil, err)
 	end, {
-		action = reviewed and "Mark file reviewed" or "Mark file unreviewed",
+		action = reviewed and "Mark files reviewed" or "Mark files unreviewed",
 		repo = pr.repo_full_name,
 		number = pr.id,
-		path = path,
+		files = #paths,
 	})
 end
 

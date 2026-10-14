@@ -145,7 +145,7 @@ return {
 			approve = reviews_api.approve,
 			request_changes = reviews_api.request_changes,
 			discard_review = reviews_api.discard,
-			set_file_reviewed = reviews_api.set_file_reviewed,
+			set_files_reviewed = reviews_api.set_files_reviewed,
 		},
 		-- tasks = {
 		-- 	add_task = nil,
