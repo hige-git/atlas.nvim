@@ -198,8 +198,7 @@ local function notification_under_cursor()
 	return nil
 end
 
----@param force_refresh boolean
-local function load(force_refresh)
+local function load()
 	local provider = popup_provider
 	local notifications_api = provider and provider.capabilities.notifications
 	if provider == nil or notifications_api == nil then
@@ -212,7 +211,7 @@ local function load(force_refresh)
 	record.error = nil
 	rerender()
 
-	active_handle = notifications_api.fetch({ force_refresh = force_refresh }, function(notifications, err)
+	active_handle = notifications_api.fetch(nil, function(notifications, err)
 		active_handle = nil
 		record.is_loading = false
 		if err then
@@ -317,7 +316,7 @@ local function register_keymaps(target_buf)
 
 	for _, k in ipairs(keys.refresh) do
 		map(k, function()
-			load(true)
+			load()
 		end, "Refresh notifications")
 	end
 
@@ -413,14 +412,14 @@ function M.open(provider, on_update)
 	rerender()
 
 	if #state.get(provider.id).notifications == 0 then
-		load(false)
+		load()
 	else
 		focus_first()
 	end
 end
 
 ---@param provider PullsProvider|IssuesProvider
----@param opts { force_refresh: boolean|nil, on_done: fun()|nil }|nil
+---@param opts { on_done: fun()|nil }|nil
 function M.refresh(provider, opts)
 	opts = opts or {}
 	local notifications_api = provider.capabilities.notifications
@@ -428,7 +427,7 @@ function M.refresh(provider, opts)
 		return
 	end
 
-	notifications_api.fetch({ force_refresh = opts.force_refresh == true }, function(notifications, err)
+	notifications_api.fetch(nil, function(notifications, err)
 		if err then
 			return
 		end

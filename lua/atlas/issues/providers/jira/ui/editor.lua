@@ -23,6 +23,7 @@ local adf = require("atlas.formats.adf.from_markdown")
 ---@field assignee string|false
 ---@field reporter string|false
 ---@field issue_type string|false
+---@field fields table<string, { name: string, label: string, value: any }>
 
 ---@class JiraIssueEditorState
 ---@field project_key string
@@ -31,10 +32,11 @@ local adf = require("atlas.formats.adf.from_markdown")
 ---@field assignee AtlasUser|nil
 ---@field reporter AtlasUser|nil
 ---@field issue_type IssueType|nil
+---@field fields table<string, { name: string, label: string, value: any }>
 ---@field raw_description table|string|nil
 ---@field initial JiraIssueEditorValues
 ---@field requests AtlasRequestScope
----@field loading { assignee?: boolean, reporter?: boolean, type?: boolean }
+---@field loading { assignee?: boolean, reporter?: boolean, type?: boolean, fields?: boolean }
 ---@field submitting boolean
 
 ---@param state JiraIssueEditorState
@@ -48,6 +50,7 @@ local function values(state, editor)
 		assignee = state.assignee and state.assignee.id or false,
 		reporter = state.reporter and state.reporter.id or false,
 		issue_type = state.issue_type and state.issue_type.id or false,
+		fields = state.fields,
 	}
 end
 
@@ -93,7 +96,7 @@ local function select_user(state, editor, field)
 		return
 	end
 
-	local unassigned = { id = "__unassigned__", name = "Unassigned" }
+	local unassigned = { id = "__unassigned__", name = "None" }
 	picker.search({
 		title = field == "assignee" and "Assignee" or "Reporter",
 		format_item = function(user)
@@ -138,7 +141,8 @@ end
 
 ---@param state JiraIssueEditorState
 ---@param editor AtlasForm
-local function select_issue_type(state, editor)
+---@param on_selected (fun())|nil
+local function select_issue_type(state, editor, on_selected)
 	if state.submitting or state.loading.type then
 		return
 	end
@@ -148,7 +152,7 @@ local function select_issue_type(state, editor)
 	form.render_meta(editor)
 
 	state.requests.run(function(done)
-		return issues.get_create_meta(state.project_key, done)
+		return issues.get_issue_types(state.project_key, done)
 	end, function(items, err)
 		state.loading.type = nil
 		if state.submitting then
@@ -177,8 +181,14 @@ local function select_issue_type(state, editor)
 			end,
 			on_select = function(item)
 				if item and not editor.closed and not state.submitting then
+					if not state.issue_type or state.issue_type.id ~= item.id then
+						state.fields = {}
+					end
 					state.issue_type = item
 					form.render_meta(editor)
+					if on_selected then
+						on_selected()
+					end
 				end
 			end,
 		})
@@ -205,6 +215,155 @@ local function load_reporter(state, editor)
 end
 
 ---@param state JiraIssueEditorState
+---@param editor AtlasForm
+---@param field_id string
+---@param field JiraMetaField
+local function edit_field(state, editor, field_id, field)
+	local current = state.fields[field_id]
+	---@param label string|nil
+	---@param value any
+	local function set(label, value)
+		if not editor.closed and not state.submitting then
+			state.fields[field_id] = label and { name = field.name, label = label, value = value } or nil
+			form.render_meta(editor)
+		end
+	end
+
+	if field.kind == "select" then
+		local none = { id = "", name = "None" }
+		picker.select({
+			title = field.name,
+			items = vim.list_extend({ none }, field.options),
+			format_item = function(option)
+				return option.name
+			end,
+			on_select = function(option)
+				if option == none then
+					set(nil)
+				elseif option then
+					set(option.name, { id = option.id })
+				end
+			end,
+		})
+	elseif field.kind == "multi_select" then
+		local chosen = {}
+		for _, option in ipairs(current and current.value or {}) do
+			chosen[option.id] = true
+		end
+		picker.multi_select({
+			title = field.name,
+			items = field.options,
+			selected = vim.tbl_filter(function(option)
+				return chosen[option.id]
+			end, field.options),
+			key = function(option)
+				return option.id
+			end,
+			format_item = function(option)
+				return option.name
+			end,
+			on_done = function(selected)
+				local names = vim.tbl_map(function(option)
+					return option.name
+				end, selected)
+				local ids = vim.tbl_map(function(option)
+					return { id = option.id }
+				end, selected)
+				set(#selected > 0 and table.concat(names, ", ") or nil, ids)
+			end,
+		})
+	else
+		local prompt = field.name .. (field.kind == "date" and " (YYYY-MM-DD)" or "") .. ": "
+		vim.ui.input({ prompt = prompt, default = current and current.label }, function(input)
+			input = input and vim.trim(input)
+			if input == nil then
+				return
+			elseif input == "" then
+				set(nil)
+			elseif field.kind == "labels" then
+				local labels = vim.split(input, "[,%s]+", { trimempty = true })
+				set(#labels > 0 and table.concat(labels, ", ") or nil, labels)
+			elseif field.kind == "date" and not input:match("^%d%d%d%d%-%d%d%-%d%d$") then
+				editor.statusline:notify("error", field.name .. " must look like YYYY-MM-DD")
+			elseif field.kind == "number" and not tonumber(input) then
+				editor.statusline:notify("error", field.name .. " must be a number")
+			else
+				set(input, field.kind == "number" and tonumber(input) or input)
+			end
+		end)
+	end
+end
+
+---@param state JiraIssueEditorState
+---@param editor AtlasForm
+local function select_field(state, editor)
+	if state.submitting or state.loading.fields then
+		return
+	end
+
+	local issue_type = state.issue_type
+	if not issue_type then
+		select_issue_type(state, editor, function()
+			select_field(state, editor)
+		end)
+		return
+	end
+
+	state.loading.fields = true
+	editor.statusline:notify("loading", "Loading fields...")
+	form.render_meta(editor)
+
+	state.requests.run(function(done)
+		return issues.get_create_fields(state.project_key, issue_type.id, done)
+	end, function(fields, err)
+		state.loading.fields = nil
+		render_loading(state, editor)
+		if state.submitting or state.issue_type ~= issue_type then
+			return
+		elseif not fields then
+			editor.statusline:notify("error", err or "Unable to load fields")
+			return
+		end
+
+		local handled = {
+			summary = true,
+			description = true,
+			issuetype = true,
+			project = true,
+			assignee = true,
+			reporter = true,
+		}
+		local items = {}
+		for field_id, field in pairs(fields) do
+			if field.kind and not handled[field_id] then
+				table.insert(items, { id = field_id, field = field })
+			end
+		end
+		table.sort(items, function(a, b)
+			if a.field.required ~= b.field.required then
+				return a.field.required
+			end
+			return a.field.name < b.field.name
+		end)
+
+		picker.select({
+			title = "Fields",
+			items = items,
+			format_item = function(item)
+				local current = state.fields[item.id]
+				local required = item.field.required and " *" or ""
+				return item.field.name .. required .. ": " .. (current and current.label or "None")
+			end,
+			on_select = function(item)
+				if item and not editor.closed and not state.submitting then
+					edit_field(state, editor, item.id, item.field)
+				end
+			end,
+		})
+	end)
+end
+
+---@param state JiraIssueEditorState
 ---@return AtlasFormMetaRow[]
 local function render_meta(state)
 	local type_name = state.issue_type and state.issue_type.name
@@ -214,7 +373,7 @@ local function render_meta(state)
 	local assignee = state.assignee and state.assignee.name
 	local reporter = state.reporter and state.reporter.name
 
-	return {
+	local rows = {
 		{
 			{
 				key = "Project:",
@@ -231,7 +390,7 @@ local function render_meta(state)
 		{
 			{
 				key = "Assignee:",
-				value = icons.get("user") .. " " .. (assignee or "Unassigned"),
+				value = icons.get("user") .. " " .. (assignee or "None"),
 				hl = presentation.person_hl(assignee),
 				loading = state.loading.assignee,
 			},
@@ -243,6 +402,19 @@ local function render_meta(state)
 			},
 		},
 	}
+
+	local fields = vim.tbl_values(state.fields)
+	table.sort(fields, function(a, b)
+		return a.name < b.name
+	end)
+	for i = 1, #fields, 2 do
+		local row = {}
+		for _, field in ipairs({ fields[i], fields[i + 1] }) do
+			table.insert(row, { key = field.name .. ":", value = field.label })
+		end
+		table.insert(rows, row)
+	end
+	return rows
 end
 
 ---@param state JiraIssueEditorState
@@ -310,8 +482,10 @@ local function submit(state, editor)
 		summary = current.title,
 		description = description(state, current.body),
 		issuetype = { id = current.issue_type },
-		assignee = current.assignee and { [user_key] = current.assignee } or vim.NIL,
 	}
+	if current.assignee ~= state.initial.assignee then
+		fields.assignee = current.assignee and { [user_key] = current.assignee } or vim.NIL
+	end
 	if current.reporter ~= state.initial.reporter then
 		fields.reporter = current.reporter and { [user_key] = current.reporter } or vim.NIL
 	end
@@ -324,6 +498,9 @@ local function submit(state, editor)
 	end
 
 	fields.project = { key = state.project_key }
+	for field_id, field in pairs(state.fields) do
+		fields[field_id] = field.value
+	end
 	issues.create_issue(fields, done)
 end
 
@@ -376,6 +553,7 @@ local function open_editor(project_key, issue, details, on_done)
 		assignee = assignee,
 		reporter = reporter,
 		issue_type = issue_type,
+		fields = {},
 		raw_description = details and details.raw_description,
 		initial = {
 			title = vim.trim(details and details.title or ""),
@@ -383,6 +561,7 @@ local function open_editor(project_key, issue, details, on_done)
 			assignee = assignee and assignee.id or false,
 			reporter = reporter and reporter.id or false,
 			issue_type = issue_type and issue_type.id or false,
+			fields = {},
 		},
 		requests = requests.new(),
 		loading = {},
@@ -412,6 +591,16 @@ local function open_editor(project_key, issue, details, on_done)
 			end,
 		},
 	}
+
+	if not issue then
+		table.insert(editor_keys, {
+			key = "gf",
+			desc = "fields",
+			action = function(editor)
+				select_field(state, editor)
+			end,
+		})
+	end
 
 	local preview_keys = keymaps.resolve("ui.toggle_description_mode")
 	if preview_keys then

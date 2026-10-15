@@ -685,26 +685,51 @@ issues = {
         ["Blocked"] = "",
       },
 
-      -- Custom fields to display per project; replace KAN with your project key.
-      KAN = {
-        customfield_10003 = {
-          name = "Approvers",
-          format = function(value)
-            if type(value) ~= "table" or #value == 0 then
-              return nil -- nil hides the field
-            end
-            return table.concat(value, ", ")
-          end,
-          hl_group = "AtlasChipActive",
-          display = "chip", -- "chip" or "table"
-        },
-      },
+      -- Fields per project; see "Project fields" below.
+      KAN = { ... },
     },
   },
 },
 ```
 
 <img alt="jira" src="https://github.com/user-attachments/assets/5268d7d7-b16d-4f1d-9650-87db31bf5a2d" />
+
+**Project fields**
+
+Custom fields to display per project under `project_config`, keyed by Jira field ID. Replace `KAN` with your project key.
+
+- `format` shows the field in the detail panel, as a chip or a table row (`display`).
+- `name` is the field's label.
+
+```lua
+KAN = {
+  customfield_10003 = {
+    name = "Approvers",
+    format = function(value)
+      if type(value) ~= "table" or #value == 0 then
+        return nil -- nil hides the field
+      end
+      return table.concat(value, ", ")
+    end,
+    hl_group = "AtlasChipActive",
+    display = "chip", -- "chip" or "table"
+  },
+},
+```
+
+To find out which custom fields your project has, expand the field names of any issue: `https://your-site.atlassian.net/rest/api/3/issue/KAN-1?expand=names`. `names` maps each field ID to its name, and `fields` holds the value `format` receives.
+
+If you came here to replace the browser with this plugin, here's a curl for you:
+
+```sh
+curl -s -u "you@example.com:your_jira_api_token" \
+  "https://your-site.atlassian.net/rest/api/3/issue/KAN-1?expand=names" \
+  | jq .names
+```
+
+Once you have the ID, use `jq .fields.customfield_10003` to see the value `format` receives.
+
+On Jira Server/Data Center, use `/rest/api/2/`, and with bearer auth `-H "Authorization: Bearer your_jira_api_token"`.
 
 </details>
 

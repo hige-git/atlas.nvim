@@ -51,23 +51,13 @@ local function normalize(raw)
 	}
 end
 
----@param opts { all: boolean|nil, per_page: number|nil, force_refresh: boolean|nil }|nil
+---@param opts { all: boolean|nil, per_page: number|nil }|nil
 ---@param on_done fun(notifications: AtlasNotification[]|nil, err: string|nil)
 ---@return { cancel: fun() }|nil
 function M.fetch(opts, on_done)
 	opts = vim.tbl_extend("force", { all = true, per_page = 100 }, opts or {})
 	local per_page = tonumber(opts.per_page) or 100
 	local all = opts.all == true
-
-	local cache_key = string.format("github:notifications:all=%s:per_page=%d", tostring(all), per_page)
-
-	if not opts.force_refresh then
-		local cached, ok = client.get_mem(cache_key)
-		if ok then
-			on_done(cached, nil)
-			return nil
-		end
-	end
 
 	local endpoint = string.format("notifications?per_page=%d", per_page)
 	if all then
@@ -90,7 +80,6 @@ function M.fetch(opts, on_done)
 			table.insert(notifications, normalize(raw))
 		end
 
-		client.set_mem(cache_key, notifications, 60)
 		on_done(notifications, nil)
 	end, {
 		action = "Fetch notifications",
@@ -108,7 +97,6 @@ function M.mark_read(thread_id, on_done)
 			on_done(false, err)
 			return
 		end
-		client.clear_mem("github:notifications:")
 		on_done(true, nil)
 	end, {
 		action = "Mark notification read",
@@ -125,7 +113,6 @@ function M.mark_done(thread_id, on_done)
 			on_done(false, err)
 			return
 		end
-		client.clear_mem("github:notifications:")
 		on_done(true, nil)
 	end, {
 		action = "Mark notification done",

@@ -60,6 +60,38 @@ describe("Jira issue mapping", function()
 		assert.is_nil(details._raw)
 	end)
 
+	it("maps create metadata fields to kinds and options", function()
+		local function kind(schema, allowed_values)
+			return mapper.to_meta_field({ schema = schema, allowedValues = allowed_values }).kind
+		end
+
+		assert.same(
+			{
+				name = "Team",
+				required = true,
+				kind = "select",
+				options = { { id = "1", name = "Platform" }, { id = "2", name = "High" } },
+			},
+			mapper.to_meta_field({
+				name = "Team",
+				required = true,
+				schema = { type = "option" },
+				allowedValues = { { id = "1", value = "Platform" }, { id = 2, name = "High" }, { name = "No id" } },
+			})
+		)
+		assert.equal("multi_select", kind({ type = "array", items = "option" }, { { id = "1", value = "A" } }))
+		assert.equal(
+			"text",
+			kind({ type = "string", custom = "com.atlassian.jira.plugin.system.customfieldtypes:textfield" })
+		)
+		assert.equal("number", kind({ type = "number" }))
+		assert.equal("date", kind({ type = "date" }))
+		assert.equal("labels", kind({ type = "array", items = "string" }))
+		assert.is_nil(kind({ type = "string", custom = "com.atlassian.jira.plugin.system.customfieldtypes:textarea" }))
+		assert.is_nil(kind({ type = "string", custom = "com.pyxis.greenhopper.jira:jsw-issue-color" }))
+		assert.is_nil(kind({ type = "user" }))
+	end)
+
 	it("uses the generic icon and a dynamic color for custom issue types", function()
 		local issue_type = mapper.to_issue_type({ id = "10002", name = "Custom" })
 

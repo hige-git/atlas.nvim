@@ -8,7 +8,7 @@
 ---@field url string|nil
 
 ---@class AtlasNotificationsCapability
----@field fetch fun(opts: { force_refresh: boolean|nil }|nil, on_done: fun(notifications: AtlasNotification[]|nil, err: string|nil)): { cancel: fun() }|nil
+---@field fetch fun(opts: table|nil, on_done: fun(notifications: AtlasNotification[]|nil, err: string|nil)): { cancel: fun() }|nil
 ---@field mark_read fun(id: string, on_done: fun(ok: boolean, err: string|nil)): { cancel: fun() }|nil
 ---@field mark_done fun(id: string, on_done: fun(ok: boolean, err: string|nil)): { cancel: fun() }|nil
 

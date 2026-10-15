@@ -4,6 +4,7 @@ local config = require("atlas.config")
 local highlights = require("atlas.ui.highlights")
 local icons = require("atlas.ui.shared.icons")
 local json = require("atlas.core.json")
+local logger = require("atlas.core.logger")
 local users = require("atlas.providers.jira.users")
 
 ---@param raw any
@@ -202,9 +203,9 @@ function M.to_issue(raw, sp_field)
 end
 
 ---@param raw table
----@param project_config AtlasJiraProjectFieldsConfig|nil
+---@param fields_config AtlasJiraProjectFieldsConfig|nil
 ---@return JiraIssueDetails
-function M.to_issue_details(raw, project_config)
+function M.to_issue_details(raw, fields_config)
 	local fields = json.safe_table(raw.fields)
 	local status = extract_status(safe_get(fields, "status"))
 	local assignee = normalize_issue_user(safe_get(fields, "assignee"))
@@ -228,11 +229,13 @@ function M.to_issue_details(raw, project_config)
 		raw_description = json.nilify(fields.description),
 		custom_fields = {},
 	}
-	for field_id, field_config in pairs(project_config or {}) do
+	for field_id, field_config in pairs(fields_config or {}) do
 		local value = json.nilify(fields[field_id])
 		if value ~= nil then
 			local ok, formatted = pcall(field_config.format, value)
-			if ok and formatted and formatted ~= "" then
+			if not ok then
+				logger.logerror("Jira field format failed", { field = field_id, error = formatted })
+			elseif formatted and formatted ~= "" then
 				table.insert(details.custom_fields, {
 					name = field_config.name or field_id,
 					formatted = formatted,
@@ -242,7 +245,45 @@ function M.to_issue_details(raw, project_config)
 			end
 		end
 	end
+	table.sort(details.custom_fields, function(a, b)
+		return a.name < b.name
+	end)
 	return details
+end
+
+---@param raw table Create metadata field.
+---@return JiraMetaField
+function M.to_meta_field(raw)
+	local schema = json.safe_table(raw.schema)
+	local options = {}
+	for _, option in ipairs(json.safe_table(raw.allowedValues)) do
+		local id = json.safe_str(option.id)
+		if id then
+			table.insert(options, { id = id, name = json.safe_str(option.value or option.name) or id })
+		end
+	end
+
+	local kind = nil
+	if #options > 0 then
+		kind = schema.type == "array" and "multi_select" or "select"
+	elseif schema.type == "date" then
+		kind = "date"
+	elseif schema.type == "array" and schema.items == "string" then
+		kind = "labels"
+	elseif
+		schema.custom == "com.atlassian.jira.plugin.system.customfieldtypes:textfield"
+		or schema.custom == "com.atlassian.jira.plugin.system.customfieldtypes:url"
+	then
+		kind = "text"
+	elseif schema.type == "number" then
+		kind = "number"
+	end
+	return {
+		name = json.safe_str(raw.name) or tostring(raw.fieldId),
+		required = raw.required == true,
+		kind = kind,
+		options = options,
+	}
 end
 
 ---@param raw_issues table[]

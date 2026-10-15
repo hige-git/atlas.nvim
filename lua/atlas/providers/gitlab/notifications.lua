@@ -45,22 +45,13 @@ local function normalize(raw)
 	}
 end
 
----@param opts { state: "pending"|"done"|"all"|nil, per_page: number|nil, force_refresh: boolean|nil }|nil
+---@param opts { state: "pending"|"done"|"all"|nil, per_page: number|nil }|nil
 ---@param on_done fun(notifications: AtlasNotification[]|nil, err: string|nil)
 ---@return { cancel: fun() }|nil
 function M.fetch(opts, on_done)
 	opts = vim.tbl_extend("force", { state = "pending", per_page = 100 }, opts or {})
 	local per_page = math.max(1, math.min(100, tonumber(opts.per_page) or 100))
 	local state = opts.state or "pending"
-
-	local cache_key = string.format("gitlab:todos:state=%s:per_page=%d", state, per_page)
-	if not opts.force_refresh then
-		local cached, ok = client.get_memory_cache(cache_key)
-		if ok then
-			on_done(cached, nil)
-			return nil
-		end
-	end
 
 	local endpoint = string.format("/todos?per_page=%d", per_page)
 	if state ~= "all" then
@@ -76,7 +67,6 @@ function M.fetch(opts, on_done)
 		for _, raw in ipairs(type(result) == "table" and result or {}) do
 			table.insert(notifications, normalize(raw))
 		end
-		client.set_memory_cache(cache_key, notifications, 60)
 		on_done(notifications, nil)
 	end, {
 		action = "Fetch notifications",
@@ -93,7 +83,6 @@ function M.mark_done(id, on_done)
 			on_done(false, err)
 			return
 		end
-		client.clear_memory_cache("gitlab:todos:")
 		on_done(true, nil)
 	end, {
 		action = "Mark notification done",
